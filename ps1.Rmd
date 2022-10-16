@@ -1,0 +1,258 @@
+---
+title: "Problem Set 1 A-ERM"
+author: "Carlos Gonzalez"
+date: '2022-10-14'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results='hide', message=FALSE}
+# Libraries
+library(readxl)
+library(tidyverse)
+```
+
+
+## Question 1: Binary Choice
+
+# Part a)
+
+```{r}
+set.seed(1234) # For replicability
+```
+
+# Part b)
+
+There is around a 65\% chance of individual i buying the good
+
+```{r}
+# Parameters
+n = 5000
+beta = 1
+alpha = -0.5
+params_e = c(0,1)
+params_x = c(1.5, 2)
+params_model = c(alpha, beta)
+
+# Generate data
+gen_data = function(n, params_e, params_x, params_model){
+  
+  # Recover values from input
+  location = params_e[1]
+  scale = params_e[2]
+  mean_x = params_x[1]
+  sd_x = params_x[2]
+  alpha = params_model[1]
+  beta = params_model[2]
+  
+  data_binary = tibble(e_i = rlogis(n, location, scale),
+                       x_i = rnorm(n, mean_x, sd_x),
+                       u_star = alpha + beta*x_i + e_i, # Underliying var
+                       u_i = ifelse(u_star > 0, 1, 0))  #Observed variable
+  
+  data_binary
+  
+}
+
+
+# Average purchase probability
+data_binary = gen_data(n, params_e, params_x, params_model)
+prob_buying = mean(data_binary$u_i>0)
+prob_buying
+
+```
+
+# Part c)
+
+The log likelihood in the binomial logistic model is characterized by P(u_i=1|X) = p_i = exp(z) / (1 + exp(z)) = plogis(z) where z = alpha + beta*x_i.
+
+The LL of a particular realization of data is then simply the productorium of p_i * (# indivduals with u_i = 1) * (1-p_i) * (# individuals with u_i = 0)
+
+The ll is then = sum(u_i * log(p_i) + (1-u_i)log(1-p_i))
+
+```{r}
+
+ll = function(params){
+  
+  # Let params be a 1x2 vector st
+  alpha = params[1]
+  beta = params[2]
+  
+  p_i = exp(alpha + beta*data_binary$x_i) / (1 +
+    exp(alpha + beta*data_binary$x_i))
+
+ - sum(data_binary$u_i*log(p_i) + (1-data_binary$u_i)*log(1-p_i))
+}
+
+```
+
+# Part d)
+
+We observe that our log-likelihood (ll) is minimized around beta = 1. This is fully compatible with our model, given that the DGP was characterized by beta = 1.
+
+```{r, warning=FALSE}
+
+# Create tibble for plotting
+data_plot = tibble(aux_seq = seq(from = -1, to = 4, length.out = 100),
+                   ll_values = c())
+
+# Initialize index to complete values
+t = 1
+for (beta in data_plot$aux_seq){
+  data_plot$ll_values[t] = ll(c(alpha, beta))
+  t = t+1
+}
+
+# Plot
+data_plot |> ggplot(mapping = aes(x = aux_seq, y = ll_values)) +
+             geom_point()
+
+
+```
+
+
+# Part e) to g)
+
+I will use an approach slightly different to the one that we used in class. In particular, I will derive the gradient for ll, such that I can boost the performance of the optimization algorithm. Also, note that my code above was already robust to the inclusion of alpha, so there are no further modifications in this regard.
+
+```{r}
+ll_gradient<-function(params){
+  alpha = params[1]
+  beta = params[2]
+  
+  c(- sum(data_binary$u_i- (1 / (1 + exp(-(alpha + data_binary$x_i*beta))))),
+  - sum((data_binary$u_i - 
+         (1 / (1 + exp(-(alpha + data_binary$x_i*beta)))))*data_binary$x_i))
+}
+
+results = optim(par = c(0,0),
+                 fn = ll,
+                 gr = ll_gradient,
+                 method = 'BFGS',
+                 hessian = TRUE)
+
+# MLE values
+results$par
+
+#MLE SE
+sqrt(diag(solve(results$hessian)))
+
+```
+## Question 2
+
+# Part a) and b)
+
+We observe that the data is wide. According to standard practice we will reshape it as long
+```{r}
+multi = read_xlsx("../data/insurance_choice_data.xlsx")
+
+#Initial exploration
+# head(multi)
+
+# Reshape
+multi_clean = multi |> 
+  pivot_longer(starts_with('price_'), names_to = 'product', values_to = 'price') |>
+  mutate(product = as.numeric(gsub("price_", "", product)))
+
+# ids are uniformly counted three times, thus, there is no impact on shares
+total = nrow(multi_clean)
+multi_clean |> group_by(choice) |> summarize("Share %" = n()/total)
+
+```
+# Part c) and d)
+
+I understand that there is nothing left for us to do in part c). alpha_1 = 0 is a necessary regularization to identify the other parameters. Scale is not identified in this context because only "three equations" are available for identification.
+
+# Part e)
+
+```{r}
+
+ll_multi = function(theta){
+  
+  # Let theta be a 1x3 vector st
+  alpha_2 = theta[1]
+  alpha_3 = theta[2]
+  beta = theta[3]
+  
+  alpha_all = c(0, alpha_2, alpha_3)
+
+  # Prepare data for function
+  multi_clean = multi_clean |>
+                mutate(exp_zj = exp(alpha_all + beta*price),
+                       d_ij = ifelse(choice == product, 1, 0))
+  sum_expz = multi_clean |> group_by(person_id) |>
+          summarise(sum_expz = sum(exp_zj))
+  multi_clean = multi_clean |> left_join(sum_expz, by="person_id") |>
+                mutate(p_ij = exp_zj / sum_expz)
+  
+  - sum(multi_clean$d_ij*log(multi_clean$p_ij))
+}
+```
+
+# Part f)
+
+```{r}
+results = optim(c(0,0,0),
+                fn = ll_multi,
+                hessian = TRUE)
+#MLE values
+results$par
+
+#SE
+sqrt(diag(solve(results$hessian)))
+```
+# Part g)
+They are all negative
+
+## Question 3
+```{r}
+ll_inattention = function(theta){
+  
+  # Let theta be a 1x5 vector st
+  alpha_2 = theta[1]
+  alpha_3 = theta[2]
+  beta = theta[3]
+  w = theta[4]
+  gamma = theta[5]
+  
+  alpha_all = c(0, alpha_2, alpha_3)
+
+  # Prepare data for function
+  multi_clean = multi_clean |>
+                mutate(exp_zj = exp(alpha_all + beta*price),
+                       d_ij = ifelse(choice == product, 1, 0))
+  sum_expz = multi_clean |> group_by(person_id) |>
+          summarise(sum_expz = sum(exp_zj))
+  
+  multi_clean = multi_clean |> left_join(sum_expz, by="person_id") |>
+                mutate(p_ij_star = exp_zj / sum_expz,
+                       mu = exp(w + gamma*price)/(1+exp(w + gamma*price)),
+                       p_ij = ifelse(product==1, (1-mu) + mu*p_ij_star,
+                                     mu*p_ij_star))         
+  - sum(multi_clean$d_ij*log(multi_clean$p_ij))
+}
+```
+
+
+```{r}
+results = optim(c(0,0,0,0,0),
+                fn = ll_inattention,
+                hessian = TRUE)
+#MLE values
+results$par
+w = results$par[4]
+gamma = results$par[5]
+
+#SE
+sqrt(diag(solve(results$hessian)))
+
+#Finally, we recover mu
+multi_clean = multi_clean|> mutate(mu = exp(w + gamma*price)/(1+exp(w + gamma*price)))
+```
+
+# Part d)
+
+Complete
