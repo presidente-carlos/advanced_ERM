@@ -1,2 +1,2 @@
-# advanced_ERM
-Code and Solutions for Oxford MPhil in Economics Advanced ERM
+# Solutions to Advanced ERM Problem Sets - 2nd year MPhil, University of Oxford
+These problem sets are here just as a matter of reference. Current and future students can freely refer to them, however plagiarism is strictly forbiden. You will need a basic command of R-Markdown to knit these files. Installation of additional packages is expected as well. In case you find any mistake (present with probability 1) please send me a pull-request.
