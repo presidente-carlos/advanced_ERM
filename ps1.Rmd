@@ -52,6 +52,7 @@ gen_data = function(n, params_e, params_x, params_model){
                        x_i = rnorm(n, mean_x, sd_x),
                        u_star = alpha + beta*x_i + e_i, # Underliying var
                        u_i = ifelse(u_star > 0, 1, 0))  #Observed variable
+  # Outside option is normalized to zero
   
   data_binary
   
@@ -67,11 +68,11 @@ prob_buying
 
 # Part c)
 
-The log likelihood in the binomial logistic model is characterized by P(u_i=1|X) = p_i = exp(z) / (1 + exp(z)) = plogis(z) where z = alpha + beta*x_i.
+The Likelihood (L) of a particular observation in the binomial logistic model is characterized by P(u_i=1|X) = p_1 = exp(z) / (1 + exp(z)) = plogis(z) where z = alpha + beta*x_i. p_0 can be defined as 1-p_1
 
-The LL of a particular realization of data is then simply the productorium of p_i * (# indivduals with u_i = 1) * (1-p_i) * (# individuals with u_i = 0)
+The Log-Likelihood (LL) of a particular realization of data is then simply the sum across i of log(p_1) * (indicator u_i = 1) + log(1-p_1)*(indicator u_i = 0)
 
-The ll is then = sum(u_i * log(p_i) + (1-u_i)log(1-p_i))
+Non-deterministic probabilities p_j != 0 for j in \{0,1\} are needed for identification.
 
 ```{r}
 
@@ -81,17 +82,19 @@ ll = function(params){
   alpha = params[1]
   beta = params[2]
   
-  p_i = exp(alpha + beta*data_binary$x_i) / (1 +
+  # Define probabilities given parametric assumptions
+  p_1 = exp(alpha + beta*data_binary$x_i) / (1 +
     exp(alpha + beta*data_binary$x_i))
 
- - sum(data_binary$u_i*log(p_i) + (1-data_binary$u_i)*log(1-p_i))
+  # Characterize log-likelihood
+ - sum(data_binary$u_i*log(p_1) + (1-data_binary$u_i)*log(1-p_1))
 }
 
 ```
 
 # Part d)
 
-We observe that our log-likelihood (ll) is minimized around beta = 1. This is fully compatible with our model, given that the DGP was characterized by beta = 1.
+We observe that LL is minimized around beta = 1. This is fully compatible with our model, given that the DGP was characterized via beta = 1.
 
 ```{r, warning=FALSE}
 
@@ -116,7 +119,7 @@ data_plot |> ggplot(mapping = aes(x = aux_seq, y = ll_values)) +
 
 # Part e) to g)
 
-I will use an approach slightly different to the one that we used in class. In particular, I will derive the gradient for ll, such that I can boost the performance of the optimization algorithm. Also, note that my code above was already robust to the inclusion of alpha, so there are no further modifications in this regard.
+I use an approach slightly different to the one used in class. In particular, I derive the gradient for the LL, such that I can boost the performance of the optimization algorithm. Also, note that the code above was already robust to the inclusion of alpha, so no further modifications take place in this regard.
 
 ```{r}
 ll_gradient<-function(params){
@@ -145,11 +148,13 @@ sqrt(diag(solve(results$hessian)))
 
 # Part a) and b)
 
-We observe that the data is wide. According to standard practice we will reshape it as long
+I first notice that data is in wide format. According to standard practice I recode it as long.
+
 ```{r}
+# Read data
 multi = read_xlsx("../data/insurance_choice_data.xlsx")
 
-#Initial exploration
+# Initial exploration
 # head(multi)
 
 # Reshape
@@ -164,7 +169,7 @@ multi_clean |> group_by(choice) |> summarize("Share %" = n()/total)
 ```
 # Part c) and d)
 
-I understand that there is nothing left for us to do in part c). alpha_1 = 0 is a necessary regularization to identify the other parameters. Scale is not identified in this context because only "three equations" are available for identification.
+I understand that there is nothing left for us to do in part c). alpha_1 = 0 is necessary for regularization, as probabilities are invariant to nominal addition (i.e. P(alpha_0 + x_i > alpha_1 + x_i') = P(alpha_0 + delta + x_i > alpha_1 + delta + x_i')).
 
 # Part e)
 
@@ -180,7 +185,7 @@ ll_multi = function(theta){
   alpha_all = c(0, alpha_2, alpha_3)
 
   # Prepare data for function
-  multi_clean = multi_clean |>
+  multi_clean = multi_clean |> arrange(person_id, product) |>
                 mutate(exp_zj = exp(alpha_all + beta*price),
                        d_ij = ifelse(choice == product, 1, 0))
   sum_expz = multi_clean |> group_by(person_id) |>
@@ -199,15 +204,18 @@ results = optim(c(0,0,0),
                 fn = ll_multi,
                 hessian = TRUE)
 #MLE values
-results$par
+bench_values = results$par
+bench_values
 
 #SE
 sqrt(diag(solve(results$hessian)))
 ```
+
 # Part g)
-They are all negative
+They all seem to be negative. The fact that the beta coefficient representing price effects is negative is not too surprising, however, there seems to be a strong preference towards good one, whose alpha was set equal 0. This fact could be driven by unobserved differences driving up good 1 preferences (i.e. quality differences) or could be driven by other behavioral components in decision making like inattention.
 
 ## Question 3
+
 ```{r}
 ll_inattention = function(theta){
   
@@ -232,6 +240,7 @@ ll_inattention = function(theta){
                        mu = exp(w + gamma*price)/(1+exp(w + gamma*price)),
                        p_ij = ifelse(product==1, (1-mu) + mu*p_ij_star,
                                      mu*p_ij_star))         
+  
   - sum(multi_clean$d_ij*log(multi_clean$p_ij))
 }
 ```
@@ -242,17 +251,25 @@ results = optim(c(0,0,0,0,0),
                 fn = ll_inattention,
                 hessian = TRUE)
 #MLE values
-results$par
-w = results$par[4]
-gamma = results$par[5]
+inatt_values = results$par
+w = inatt_values[4]
+gamma = inatt_values[5]
 
 #SE
-sqrt(diag(solve(results$hessian)))
+se = sqrt(diag(solve(results$hessian)))
+
+# Display
+tibble("Parameter" = c("alpha_2", "alpha_3", "beta", "omega", "gamma"),
+       "Benchmark Values" = c(bench_values, NA, NA),
+       "Inattention Values" = inatt_values, "Standard Errors" = se)
 
 #Finally, we recover mu
 multi_clean = multi_clean|> mutate(mu = exp(w + gamma*price)/(1+exp(w + gamma*price)))
+
+# Some descriptive stats about mu
+summary(multi_clean$mu)
 ```
 
 # Part d)
 
-Complete
+Although some product difference seems to remain, we observe a dramatic reduction of product fixed effects when we allow for inattention. Similarly, price seems to be a higher driver of consumer choices than originally identified. Finally, observe that mu plays a very high role for some consumers. In particular, this account for up to 98\% of consumer decision for some individuals and it represents over a 90\% of choice behavior for the 3rd quartile.
