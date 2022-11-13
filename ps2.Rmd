@@ -1,20 +1,22 @@
 ---
-title: "Problem Set 2 A-ERM"
+title: "Problem Set 2 Adv-ERM"
 author: "Carlos Gonzalez"
-date: '2022-10-21'
+date: '2022-11-14'
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+#tinytex::install_tinytex() For knitting
 ```
 
-### Problem Set 2a
+# Problem Set 2a
 
 ```{r, results='hide', message=FALSE}
 # Libraries
 library(tidyverse)
 library(readxl)
+library(Rfast)
 ```
 
 
@@ -36,7 +38,7 @@ head(easy_results)
 
 ## Question 2
 
-# Part a), b) and c)
+### Part a), b) and c)
 
 ```{r}
 # Set seed
@@ -68,18 +70,19 @@ plot(density(y))
 
 ```
 
-# Part d), e), f) and g)
+### Part d), e), f) and g)
 
 Although the density (likelihood function) of the DGP in this exercise is not high-dimensional, and potentially amenable to different kinds of numerical optimization, we have decided to produce MSL like estimators. The idea is to replace the integral over the nuisance parameter u for an average of uniformly drawn u terms using a guess of our parameter of interest (theta). We repeat this process for every observation y in the data and maximize the likelihood of the "guess parameter".
 
 ```{r}
-# Create a function for identifying the contribution of a single observation to total log-likelihood
+# Create a function for identifying the contribution of a single observation
+# to total log-likelihood
 
 ind_l = function(y, theta_guess, u_i){
 log(mean((1/sqrt(2*pi))*exp(-0.5*(y - theta_guess - u_i)^2)))
 }
 
-# where u_i is a large N vector of error terms
+# where u_i is a N vector of error terms
 
 # Simulate large N of errors
 
@@ -87,35 +90,42 @@ simulated_u = u_i(10000)
 
 # Iterate this process for each y and fixed theta
 # Compute total log-likelihood
-y_ll = y
-loglik_MSL = function(theta){
-  -mean(mapply(ind_l, y = y_ll, theta_guess = theta, u_i = simulated_u))
+# We give the function extra flexibility in terms of arguments
+# for later steps in the exercises
+
+loglik_MSL = function(theta, y, u_i){
+  -mean(sapply(X = y, FUN = ind_l,
+               theta_guess = theta, u_i = u_i))
 }
 
 # Optimization
-results = optim(par = 0.1, loglik_MSL, method = "BFGS")
+results = optim(par = 0.1, loglik_MSL,
+                method = "BFGS", y = y, u_i = simulated_u)
 results$par
 results$value
 ```
 
-Our MSL estimator seems to work as it has returned a ML parameter of 1.03 which is very close to the actually generating data parameter theta = 1.
+Our MSL estimator seems to work as it has returned a ML estimate very similar to the real DG parameter theta = 1.
 
-# Part h) and i)
+### Part h) and i)
 
-Our function works fine with different theta. In particular, for theta = 2.5, our MSL is 0.26 (although the approximation is not as good as the one for theta = 0.1). Bad news are that we don't get any closer to real theta by increasing the number of draws. In fact, our likelihood's value increases very slowly
+Our function works fine with different theta. In particular, for theta = 2.5, our MSL is 2.46 for 10,000 error draws. Bad news come from the fact that we don't get any closer to real theta by increasing the number of draws, nor does our LL value. The inclusion of more iid errors gets us very little in terms of improved likelihood. This is the main reason which explained the development of MCMC like simulations.
 
 ```{r}
 
 # Changing theta
 y_new = wrap_function(1000, 2.5)
-y_ll = y_new
 
 # Optimize
-draws_10000 = optim(par = 0.1, loglik_MSL, method = "BFGS")
+draws_10000 = optim(par = 0.1, loglik_MSL,
+                    method = "BFGS", y = y_new,
+                    u_i = simulated_u)
 
 # Changing number of error draws
-simulated_u = u_i(20000)
-draws_20000 = optim(par = 0.1, loglik_MSL, method = "BFGS")
+new_u = u_i(20000)
+draws_20000 = optim(par = 0.1, loglik_MSL,
+                    method = "BFGS", y = y_new,
+                    u_i = new_u)
 
 # Value comparison
 tibble("Number of draws" = c(10000, 20000), 
@@ -124,33 +134,38 @@ tibble("Number of draws" = c(10000, 20000),
 
 ```
 
-# Part j
+### Part j
 
-When errors are redrawn, our MSL is poorly estimated. This is because our optimization method cannot distinguish if improvement in likelihood is due to improvement in change of parameters (theta) or due to varying error terms.
+Although actual parameter estimation will vary depending on the particular realization of the errors in each draw, usually we expect poor MSL estimates when errors are re-drawn. This is because our optimization method cannot distinguish if improvement in likelihood is due to improvement in change of parameters (theta) or due to varying error terms.
 
 ```{r}
-# Restore data for y
-y_ll = wrap_function(1000, 2.5)
+# We use our original y dataset
 
 # Create new optimization function
-store_ll = c()
-loglik_MSL_new = function(theta){
-  for (i in 1:length(y_ll)){
-      simulated_u = u_i(10000)
-      store_ll[i] = ind_l(y = y_ll[i], theta_guess = theta, u_i = simulated_u)
-  }
-  -mean(store_ll)
+
+indiv_MSL_new = function(theta, y){
+    redrawn_u = u_i(10000)
+    ind_l(y = y, theta_guess = theta,
+          u_i = redrawn_u)
 }
 
-redraw_errors = optim(par = 0.1, loglik_MSL_new, method = "BFGS")
+loglik_MSL_new = function(theta, y){
+ -mean(sapply(X = y, FUN = indiv_MSL_new,
+         theta = theta))
+}
+
+# Observe that because errors are redrawn in each iteration,
+# we do not have to include them as a parameter
+redrawn_errors = optim(par = 0.1, loglik_MSL_new,
+                      method = "BFGS", y = y)
 
 
 tibble("Redraw errors" = c("No", "Yes"), 
-  "MLS" = c(draws_10000$par, redraw_errors$par),
-  "LL value" = c(draws_10000$value, redraw_errors$value))
+  "MLS" = c(results$par, redrawn_errors$par),
+  "LL value" = c(results$value, redrawn_errors$value))
 ```
 
-### Problem Set 2b
+# Problem Set 2b
 
 ## Question 1
 
@@ -160,7 +175,7 @@ Multinomial probit allows you to model this cross-dependent probabilities.
 
 ## Question 2
 
-# Part a)
+### Part a) and b)
 
 ```{r, warning=FALSE}
 set.seed(1234)
@@ -190,44 +205,44 @@ var_covar = gen_sigma(0, 1)
 # Generate data function as a function of a cholesky factor
 gen_voting = function(L){
 
-# Simulate errors using Rfast
-e_ij = rmvnorm(N, mu = c(0,0,0,0), sigma = L*var_covar)
-
-voting_data = beta*tau + e_ij |> as_tibble()
-colnames(voting_data) = c("WWR", "WAWR", "WWL", "WAWL")
-
-# Recover selection and pivot_long
-voting_data = voting_data |>
-              mutate(choice = colnames(voting_data)[apply(voting_data,1,which.max)],
-                     id = 1:N) |>
-              pivot_longer(starts_with('W'),
-                           names_to = 'party', values_to = 'u_ij') |>
-              mutate(d_ij = ifelse(party == choice, 1, 0))
-voting_data
+  # Simulate errors using Rfast
+  e_ij = rmvnorm(N, mu = c(0,0,0,0), sigma = L*var_covar)
+  
+  voting_data = beta*tau + e_ij |> as_tibble()
+  colnames(voting_data) = c("WWR", "WAWR", "WWL", "WAWL")
+  
+  # Recover selection and pivot_long
+  voting_data = voting_data |>
+                mutate(choice = colnames(voting_data)[apply(voting_data,1,which.max)],
+                       id = 1:N) |>
+                pivot_longer(starts_with('W'),
+                             names_to = 'party', values_to = 'u_ij') |>
+                mutate(d_ij = ifelse(party == choice, 1, 0))
+  voting_data
 
 }
 
-# Data for data in 2b)
+# Generate (benchmark data) [2b]
 voting_data_bench = gen_voting(1)
+head(voting_data_bench)
 ```
 
-# Part c)
+### Part c)
 
 ```{r}
-# Identify cholesky factor
+# Identify cholesky factor of matrix with rho = 0.9, sigma = 1
 cholesky_matrix = gen_sigma(0.9, 1)
 chol_factor = chol(cholesky_matrix)
 
 # Generate new data
 voting_data_new = gen_voting(chol_factor)
-
 ```
+
 ## Exercise 3
 
-# Part a)
+### Part a)
 
 ```{r}
-
 set.seed(1234)
 
 # Read data and some initial adjustments
@@ -241,11 +256,11 @@ real_voting = read_xlsx("../data/political_vote_choice.xlsx") |> as_tibble() |>
 real_voting |> group_by(vote) |>
                summarise("Shares %" = 100*n()/nrow(real_voting))
 
-head(real_voting)
+# head(real_voting)
 
 ```
 
-## Part b) and c)
+### Part b) and c)
 
 ```{r}
 # Simulate fixed errors
@@ -266,45 +281,37 @@ ll_multi_probit = function(theta){
   # Find associated chol
   cholesky_matrix = gen_sigma(rho, sigma_2)
   chol_factor = chol(cholesky_matrix)
-
-  # Initialize store vector for storing results after each round
-    short_base = real_voting |> group_by(id) |> summarize(number = n())
-    big_base = matrix(NA, nrow = nrow(short_base), ncol = R+1)
-    big_base[,1] = 1:nrow(short_base) # Assign id to storing matrix
-
-  # Loop over realization of errors r
-  # Resimulate data using updated errors
-
-  for (r in 1:R){
     
+  # Create function to apply() over errors
+  single_error = function(errors){
+      
     # Update errors
-    errors_update = chol_factor%*% errors[r,] |> as.vector()
-
+    errors_update = chol_factor%*% errors |> as.vector()
+      
     # Gen updated utility using round r errors for all i
     data_base = real_voting |> select(id, party, t_ij) |>
-                mutate(u_ij = beta*t_ij + errors_update)
+                               mutate(u_ij = beta*t_ij + errors_update)
     
-    # Identify maximum u_ij and store results
+    # Identify maximum u_ij and the associated party
     max_ident = data_base |> select(id, u_ij) |> group_by(id) |>
-                summarise("max" = max(u_ij))
-    data_base = data_base |> left_join(max_ident, by = "id") |>
-                filter(max == u_ij) |> arrange(id) |> select(party)
+                             summarise("max" = max(u_ij))
+    data_base |> left_join(max_ident, by = "id") |>
+                 filter(max == u_ij) |> arrange(id) |> select(party)
+    }
     
-    # Store results after draw
-    big_base[,(r+1)] = t(data_base)
-  
-  }
+    votes = apply(errors, 1, FUN = single_error) %>%
+            do.call(cbind, .)
   
   # Compute probabilities
-  probs = matrix(NA, nrow = nrow(data_base), ncol = 4)
+  probs = matrix(NA, nrow = nrow(votes), ncol = 4)
   for (j in 1:4){
-     probs[,j] = rowSums(big_base[,-1]==j) / nrow(big_base)
+     probs[,j] = rowSums(votes==j) / ncol(votes)
   }
   
   # Compute log density
   probs = probs |> as_tibble()
   colnames(probs) = c("p1", "p2", "p3", "p4")
-  probs$id = seq(1:nrow(big_base))
+  probs$id = seq(1:nrow(probs))
   probs = probs |> pivot_longer(starts_with("p"), names_to = "party",
                                 values_to = "prob") |>
                   mutate(party = as.numeric(gsub("p", "", party)))
@@ -320,9 +327,9 @@ start_params = c(0,1,0.5)
 ll_multi_probit(start_params)
 
 ```
-## Part d)
+### Part d)
 
-Do NOT run for time concerns
+Do NOT run for time considerations
 
 ```{r, eval = FALSE}
 results_voting = optim(start_params,
@@ -331,23 +338,23 @@ results_voting = optim(start_params,
                        hessian = TRUE)
 ```
 
-## Part e) and f)
+### Part e) and f)
 
-Given that I have not run my optimization function for time considerations, I will take as true the following theta = (1, 1, 0.5)
+Given that I have not run my optimization function for time considerations, I will take as true the following theta = (1, 1, 0.8). The intuition of the code below is to recover "true" u_ij based on recovered parameters and then select as conterfactual vote the party with the highest voting probability, conditional on that party not being the fourth party.
 
 ```{r}
-# Optimization params
-rho_optim = 0.5
+# Recovered parameters (i.e. population parameters)
 sigma_2_optim = 1
 beta_optim = 1
+rho_optim = 0.8
 
-# Generate optim Sigma
+# Generate recovered Sigma
 sigma_optim = gen_sigma(rho_optim, sigma_2_optim)
 
-# Generate "true" (optim) errors
+# Generate "true" errors
 errors_optim = rmvnorm(10000, rep(0,4), sigma = sigma_optim)
 
-# Generate "true" (optim) u_ij
+# Generate "true" u_ij
 u_ij_optim = beta_optim*tau + errors_optim
 
 # Parties share if party collapse
@@ -359,7 +366,7 @@ second_max = function(u){
 
 simulation_base = u_ij_optim |> as_tibble()
 colnames(simulation_base) = c("party_1","party_2","party_3","party_4")
-simulation_base = simulation_base |> round(digits = 3) |>
+simulation_base = simulation_base |> # round(digits = 3) |>
                   mutate(vote =                           
                          colnames(simulation_base)[apply(
                                   simulation_base,1,which.max)],
@@ -377,7 +384,7 @@ simulation_base = simulation_base |> round(digits = 3) |>
 
 # Display
 new_shares = simulation_base |> group_by(real_vote) |>
-             summarize("Share %" = n()/nrow(simulation_base))
+             summarize("Share %" = 100*n()/nrow(simulation_base))
 new_shares    
 
 
