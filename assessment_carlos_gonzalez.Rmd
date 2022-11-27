@@ -1,0 +1,202 @@
+---
+title: "Practice Assessment Exercise"
+author: "Carlos Gonzalez"
+date: '2022-11-27'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+rm(list=ls())
+# Libraries
+library(plm)
+library(dplyr) # For data manipulation
+```
+
+
+```{r}
+# Load data
+data("EmplUK", package = "plm")
+
+# Data preparation
+empluk = EmplUK
+empluk = empluk |> mutate(n = log(emp),
+                          w = log(wage),
+                          k = log(capital),
+                          ys = log(output)) |>
+  select(-c(emp, wage, capital, output))
+
+rm(EmplUK)
+```
+
+```{r}
+# to avoid confusion between dplyr::lag and plm::lag
+detach("package:dplyr", unload = TRUE)
+```
+
+# Part 1
+
+## Exercise 1
+
+```{r}
+# Column 1
+c1 = pgmm(
+    n ~ lag(n, 1:2) + lag(w, 0:1) + lag(k, 0:2) +
+        lag(ys, 0:2) | lag(n, 2:99) |
+        lag(w, 0:1) + lag(k, 0:2) + lag(ys, 0:2), # Additional standard ivs
+    data = empluk,
+    index = c("firm", "year"),
+    model = "onestep",
+    effect = "twoways"
+)
+
+# Observe that pgmm returns by default robust se
+# Return coefficients and SE
+round(summary(c1)$coeff[,c(1,2)], 4)
+
+# M1 and M2 statistics
+c("m1" = round(summary(c1)$m1$statistic, 2), "m2" = round(summary(c1)$m2$statistic,2))
+
+
+# Compute 2-step GMM to recover the correct sargan statistic
+c1_2s = pgmm(
+    n ~ lag(n, 1:2) + lag(w, 0:1) + lag(k, 0:2) +
+        lag(ys, 0:2) | lag(n, 2:99) |
+        lag(w, 0:1) + lag(k, 0:2) + lag(ys, 0:2),
+    data = empluk,
+    index = c("firm", "year"),
+    model = "twostep",
+    effect = "twoways"
+)
+
+# Report Sargan statistic
+print(paste("Sargan =", round(sargan(c1_2s)$statistic, 2)))
+print(paste("p-value =", round(sargan(c1_2s)$p.value, 3)))
+
+
+# DF also match those reported in table
+```
+## Exercise 2
+
+If error terms v_it were to be serially correlated, the first available instrument will be equal to the third lag of the dependent variable. Hence, we can simply run our code above (using a two-step model) reducing the number of intruments and eventually comparing the sargan tests of both especifications
+
+```{r}
+c1_alt = pgmm(
+    n ~ lag(n, 1:2) + lag(w, 0:1) + lag(k, 0:2) +
+        lag(ys, 0:2) | lag(n, 3:99) | # 2nd lag is not a valid iv
+        lag(w, 0:1) + lag(k, 0:2) + lag(ys, 0:2),
+    data = empluk,
+    index = c("firm", "year"),
+    model = "twostep",
+    effect = "twoways"
+)
+
+diff_1 = round(sargan(c1_2s)$statistic - sargan(c1_alt)$statistic,2)
+
+# Report Sargant difference
+print(paste("Sargan Diff =", diff_1))
+print(paste("p-value =", round(1-pchisq(diff_1, df=6), 3)))
+```
+## Exercise 3
+
+```{r}
+# Column 2
+c2 = pgmm(
+    n ~ lag(n, 1) + lag(w, 0:1) + lag(k, 0:1) |
+      lag(n, 2:99) + lag(w, 2:99) + lag(k, 2:99), #Using covariates as ivs
+    data = empluk,
+    index = c("firm", "year"),
+    model = "onestep",
+    effect = "twoways"
+)
+
+# Return coefficients and SE
+round(summary(c2)$coeff[,c(1,2)], 4)
+
+# M1 and M2 statistics
+c("m1" = round(summary(c2)$m1$statistic, 2), "m2" = round(summary(c2)$m2$statistic,2))
+
+# Compute 2-step GMM to recover the correct sargan statistic
+c2_2s = pgmm(
+    n ~ lag(n, 1) + lag(w, 0:1) + lag(k, 0:1) |
+      lag(n, 2:99) + lag(w, 2:99) + lag(k, 2:99),
+    data = empluk,
+    index = c("firm", "year"),
+    model = "twostep",
+    effect = "twoways"
+)
+
+# Report Sargan statistic
+print(paste("Sargan =", round(sargan(c2_2s)$statistic, 2)))
+print(paste("p-value =", round(sargan(c2_2s)$p.value, 3)))
+```
+
+## Exercise 4
+
+```{r}
+# Column 3
+c3 = pgmm(
+    n ~ lag(n, 1) + lag(w, 0:1) + lag(k, 0:1) |
+      lag(n, 2:99) + lag(w, 2:99) + lag(k, 2:99) ,
+    data = empluk,
+    index = c("firm", "year"),
+    model = "onestep",
+    effect = "twoways",
+    transformation = "ld" # Instruments for levels eqs
+)
+
+# Return coefficients and SE
+round(summary(c3)$coeff[,c(1,2)], 4)
+
+# M1 and M2 statistics
+c("m1" = round(summary(c3)$m1$statistic, 2), "m2" = round(summary(c3)$m2$statistic,2))
+
+# Compute 2-step GMM to recover the correct sargan statistic
+c3_2s = pgmm(
+    n ~ lag(n, 1) + lag(w, 0:1) + lag(k, 0:1) |
+      lag(n, 2:99) + lag(w, 2:99) + lag(k, 2:99) ,
+    data = empluk,
+    index = c("firm", "year"),
+    model = "twostep",
+    effect = "twoways",
+    transformation = "ld"
+)
+
+# Report Sargan statistic
+print(paste("Sargan =", round(sargan(c3_2s)$statistic, 2)))
+print(paste("p-value =", round(sargan(c3_2s)$p.value, 3)))
+```
+## Exercise 5
+
+This test reduces to compute the sargen test for the system-GMM specification vs the standard first-difference test. Observe that the standard first-difference test was already computed in Column (2).
+
+```{r}
+# Compute difference
+diff_3 = round(sargan(c3_2s)$statistic - sargan(c2_2s)$statistic,2)
+
+# Report Sargant difference
+print(paste("Sargan Diff =", diff_3))
+print(paste("p-value =", round(1-pchisq(diff_3, df=21), 3)))
+
+```
+
+# Part 2
+
+## Exercise 1
+
+The Diff-Sargan test in Column (1) is (very) significant at standard confidence levels. Moreover, the Sargan statistic for the null does not seem to be significant at standard confidence levels. These two pieces of evidence together suggest that we should reject the null-hypothesis (at a 95\% confidence level), and consequently we should reject the absence of serial correlation across errors. In other words, there is strong evidence supporting serial correlation across errors.
+
+M1 reports the serial correlation in first differenced errors, where we expect to find non-zero (negative) results. Evidence supports this finding.
+
+Remains interesting to check for second order serial correlation of differenced errors, as this would support hypothesis of serially correlated errors as well. Evidence, coinciding with Sargent tests, supports our concerns.
+
+## Exercise 2
+
+In this case, there seems to be not statistical difference between the Sargent tests under the null (correlation between covariates and error terms in the level equations) and the alternative (no correlation).
+
+Accordingly, we cannot reject the null-hypothesis at standard confidence levels. In words, based on statistical evidence the additional restrictions needed for system-GMM moments to hold, seem not to be justified in our panel, and consequently covariates may be correlated with time-invariant error components (even under the assumption of no-correlation between covariates and v_it).
+
+Note, however, that there seems to be important differences across coefficient estimates, what makes Hausman tests likely to yield different results. Further research should take place.
